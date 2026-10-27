@@ -21,7 +21,19 @@ async function parseTweets(runkeeper_tweets) {
     // Use UTC consistently with the overview. Duration-only workouts have no distance.
     const distances = completed.filter(tweet => topActivities.includes(tweet.activityType) && tweet.distance > 0 && Number.isFinite(tweet.time.getTime()))
         .map(tweet => ({ activity: tweet.activityType, distance: tweet.distance,
-            day: days[tweet.time.getUTCDay()], dayIndex: tweet.time.getUTCDay() }));
+            day: days[tweet.time.getUTCDay()], dayIndex: tweet.time.getUTCDay(), samples: 1 }));
+    // Prepare one row per activity/day for the streaming-data mean view.
+    const dailyGroups = new Map();
+    distances.forEach(row => {
+        const key = row.activity + ':' + row.dayIndex;
+        if (!dailyGroups.has(key)) dailyGroups.set(key, { ...row, distance: 0, samples: 0 });
+        const group = dailyGroups.get(key);
+        group.distance += row.distance;
+        group.samples += 1;
+    });
+    const dailyMeans = Array.from(dailyGroups.values(), group => ({
+        ...group, distance: group.distance / group.samples
+    }));
     const mean = values => values.length ? values.reduce((sum, value) => sum + value.distance, 0) / values.length : 0;
     const means = topActivities.map(activity => ({ activity, values: distances.filter(value => value.activity === activity) }))
         .filter(group => group.values.length).map(group => ({ activity: group.activity, mean: mean(group.values) }))
@@ -47,47 +59,55 @@ async function parseTweets(runkeeper_tweets) {
     };
     const distanceSpec = {
         $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-        title: 'Individual activity distances by day', width, height: 320,
+        title: 'Activity distances by day', width, height: 320,
         description: 'Distances in miles for the three most frequently tweeted activities, grouped by UTC weekday.',
-        data: { values: distances }, mark: { type: 'point', opacity: 0.4, filled: true },
+        data: { name: 'distanceData', values: distances.map(row => ({ ...row })) },
+        mark: { type: 'point', opacity: 0.6, filled: true, size: 65 },
         encoding: {
             x: { field: 'day', type: 'ordinal', sort: days, title: 'Day of week (UTC)', axis: { labelAngle: -25 } },
             y: { field: 'distance', type: 'quantitative', title: 'Distance (miles)', scale: { zero: true } },
             color: { field: 'activity', type: 'nominal', title: 'Activity', scale: { domain: topActivities } },
             tooltip: [{ field: 'activity', title: 'Activity' }, { field: 'day', title: 'Day' },
-                { field: 'distance', type: 'quantitative', format: '.2f', title: 'Miles' }]
-        }
-    };
-    const meanSpec = {
-        ...distanceSpec, title: 'Mean activity distances by day',
-        mark: { type: 'line', point: true },
-        encoding: {
-            ...distanceSpec.encoding,
-            y: { ...distanceSpec.encoding.y, aggregate: 'mean', title: 'Mean distance (miles)' },
-            order: { field: 'dayIndex', type: 'quantitative', aggregate: 'min' },
-            tooltip: [{ field: 'activity', title: 'Activity' }, { field: 'day', title: 'Day' },
-                { field: 'distance', aggregate: 'mean', type: 'quantitative', format: '.2f', title: 'Mean miles' }]
+                { field: 'distance', type: 'quantitative', format: '.2f', title: 'Miles' },
+                { field: 'samples', type: 'quantitative', title: 'Activities represented' }]
         }
     };
 
     const button = document.getElementById('aggregate');
-    const individualChart = document.getElementById('distanceVis');
-    const meanChart = document.getElementById('distanceVisAggregated');
+    const mode = document.getElementById('distanceMode');
     let showMeans = false;
-    const updateView = () => {
-        individualChart.style.display = showMeans ? 'none' : 'block';
-        meanChart.style.display = showMeans ? 'block' : 'none';
+    const updateLabels = () => {
         button.textContent = showMeans ? 'Show individual activities' : 'Show means';
         button.setAttribute('aria-pressed', String(showMeans));
+        mode.textContent = showMeans
+            ? 'Daily means: each point is the average distance for one activity type on one day.'
+            : 'Individual activities: each point is the distance of one completed activity.';
     };
     button.disabled = true;
-    button.onclick = () => { showMeans = !showMeans; updateView(); };
-    updateView();
-    await Promise.all([
+    updateLabels();
+    const [, distanceChart] = await Promise.all([
         vegaEmbed('#activityVis', activitySpec, { actions: false }),
-        vegaEmbed('#distanceVis', distanceSpec, { actions: false }),
-        vegaEmbed('#distanceVisAggregated', meanSpec, { actions: false })
+        vegaEmbed('#distanceVis', distanceSpec, { actions: false })
     ]);
+    // Keep the same Vega View and canvas. Only its named dataset is replaced.
+    // Clone rows because Vega attaches tuple metadata to inserted objects.
+    button.onclick = async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        const nextMode = !showMeans;
+        try {
+            const rows = nextMode ? dailyMeans : distances;
+            const changes = vega.changeset().remove(() => true).insert(rows.map(row => ({ ...row })));
+            await distanceChart.view.change('distanceData', changes).runAsync();
+            showMeans = nextMode;
+            updateLabels();
+        } catch (error) {
+            console.error(error);
+            mode.textContent = 'Unable to update the chart. Please reload the page.';
+        } finally {
+            button.disabled = false;
+        }
+    };
     button.disabled = false;
 }
 
