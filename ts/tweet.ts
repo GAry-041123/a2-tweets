@@ -1,4 +1,8 @@
 class Tweet {
+    // Small, manually curated English lexicon; inspired by the opinion-lexicon
+    // approach linked in the assignment, not a copy of the full Hu/Liu dataset.
+    private static readonly positiveWords = new Set(('amazing awesome beautiful best better brilliant calm cheerful comfortable confident cool delightful easy energetic enjoyable excellent exciting fantastic fine fresh fun glad glorious good gorgeous great happy healthy incredible lovely marvelous nice peaceful perfect pleasant pleased positive proud refreshing relaxed relaxing satisfying smooth strong successful sunny superb terrific thrilled wonderful enjoy enjoyed enjoying love loved loving').split(' '));
+    private static readonly negativeWords = new Set(('aching angry annoying anxious awful bad boring brutal cold cruel depressing difficult disappointed disappointing dreadful exhausted exhausting frustrating gloomy horrible hurt injured miserable nasty negative painful poor rough sad sick slow sore stressful terrible tired tiring tough ugly uncomfortable unhappy unpleasant weak worse worst hate hated hating pain struggle struggling failed').split(' '));
     private text: string;
     time: Date;
 
@@ -62,6 +66,38 @@ class Tweet {
         return /^k/i.test(match[2]) ? distance / 1.609344 : distance;
     }
 
+    get sentiment(): { label: string; score: number; matches: string[] } {
+        const content = this.writtenText;
+        if (!content) return { label: 'No authored text', score: 0, matches: [] };
+        const tokens = content.toLowerCase().replace(/’/g, "'").match(/[a-z]+(?:'[a-z]+)?|[.!?,;:]/g) || [];
+        let positive = 0;
+        let negative = 0;
+        let negationRemaining = 0;
+        const matches: string[] = [];
+        for (const token of tokens) {
+            // Punctuation and contrast words end a simple three-word negation scope.
+            if (/^[.!?,;:]$/.test(token) || ['but', 'however', 'yet'].includes(token)) {
+                negationRemaining = 0;
+                continue;
+            }
+            if (['not', 'no', 'never', 'neither', 'nor', 'without', 'hardly'].includes(token) || token.endsWith("n't")) {
+                negationRemaining = 3;
+                continue;
+            }
+            let weight = Tweet.positiveWords.has(token) ? 1 : Tweet.negativeWords.has(token) ? -1 : 0;
+            if (weight !== 0) {
+                const negated = negationRemaining > 0;
+                if (negated) weight = -weight;
+                if (weight > 0) positive++; else negative++;
+                matches.push((negated ? 'not ' : '') + token + (weight > 0 ? ' (+1)' : ' (-1)'));
+            }
+            if (negationRemaining > 0) negationRemaining--;
+        }
+        const score = positive - negative;
+        const label = score > 0 ? 'Positive' : score < 0 ? 'Negative' : positive + negative > 0 ? 'Mixed' : 'Neutral';
+        return { label, score, matches };
+    }
+
     getHTMLTableRow(rowNumber: number): string {
         // Escape tweet content; only http(s) URLs become clickable links.
         const escapeHTML = (text: string): string => text.replace(/[&<>"']/g, character => {
@@ -81,7 +117,15 @@ class Tweet {
             position = match.index + url.length;
         }
         html += escapeHTML(this.text.slice(position));
+        const sentiment = this.sentiment;
+        const colors: { [key: string]: string } = {
+            Positive: 'text-bg-success', Negative: 'text-bg-danger', Mixed: 'text-bg-warning', Neutral: 'text-bg-secondary'
+        };
+        const explanation = sentiment.matches.length ? sentiment.matches.join(', ') : 'No sentiment words matched.';
+        const score = sentiment.score > 0 ? '+' + sentiment.score : String(sentiment.score);
         return '<tr><th scope="row">' + escapeHTML(String(rowNumber)) + '</th><td>' +
-            escapeHTML(this.activityType) + '</td><td>' + html + '</td></tr>';
+            escapeHTML(this.activityType) + '</td><td>' + html + '</td><td class="sentiment">' +
+            '<span class="badge ' + (colors[sentiment.label] || 'text-bg-secondary') + '" title="' + escapeHTML(explanation) + '">' +
+            escapeHTML(sentiment.label) + ' (' + score + ')</span></td></tr>';
     }
 }

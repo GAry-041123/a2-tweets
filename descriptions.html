@@ -53,12 +53,14 @@
     <p>
       <span id="searchCount">???</span> Tweets contain the text '<span id="searchText">???</span>'.
     </p>
-    <table class="table table-striped">
+    <p class="text-muted" id="sentimentHelp">Sentiment estimates use positive and negative words in the author's text, with basic negation handling. A score above zero is positive; below zero is negative. Mixed means balanced positive and negative matches; neutral means no matches. Hover over a result for matched words. Sarcasm and context may be missed.</p>
+    <table class="table table-striped" aria-describedby="sentimentHelp">
       <thead>
         <tr>
           <th scope="col">#</th>
           <th scope="col">Activity type</th>
           <th scope="col">Tweet</th>
+          <th scope="col">Sentiment</th>
         </tr>
       </thead>
       <tbody id="tweetTable">
